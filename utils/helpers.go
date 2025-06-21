@@ -34,6 +34,11 @@ func ParseEMSGAddress(address string) (*EMSGAddress, error) {
 		return nil, fmt.Errorf("user part cannot be empty")
 	}
 
+	// Check user length (reasonable limit for usernames)
+	if len(user) > 64 {
+		return nil, fmt.Errorf("user part too long: maximum 64 characters")
+	}
+
 	// Validate user format (alphanumeric, dots, hyphens, underscores)
 	userRegex := regexp.MustCompile(`^[a-zA-Z0-9._-]+$`)
 	if !userRegex.MatchString(user) {
@@ -116,7 +121,7 @@ func IsValidEMSGAddress(address string) bool {
 // NormalizeEMSGAddress normalizes an EMSG address by trimming whitespace and converting to lowercase
 func NormalizeEMSGAddress(address string) string {
 	address = strings.TrimSpace(address)
-	
+
 	// Split and normalize parts
 	parts := strings.Split(address, "#")
 	if len(parts) != 2 {
