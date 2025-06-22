@@ -17,6 +17,7 @@ A cross-platform, developer-friendly client SDK for the EMSG (Electronic Message
 - 🪝 **Developer Hooks**: Before/after send callbacks for custom logging and processing
 - 🏗️ **Clean API**: Idiomatic Go package structure with comprehensive documentation
 - 🧪 **Integration Testing**: Mock and real server testing capabilities
+- 👥 **Group Management**: Group creation, roles (admin/member/guest), add/remove participants, signed/verifiable control messages
 - ✅ **Well Tested**: 50+ unit tests with comprehensive coverage
 
 ## Installation
@@ -675,6 +676,23 @@ go run examples/get_messages.go \
     -address=alice#example.com
 ```
 
+### Group Management Demo
+
+Run the comprehensive group management demo:
+
+```bash
+# Run the group management demonstration
+go run examples/group_management_demo.go
+```
+
+This demo showcases:
+- 👥 Group creation and custom settings
+- 👤 Adding/removing members with roles (Owner, Admin, Moderator, Member, Guest)
+- 🔏 Signed/verifiable group control messages
+- 🔄 Role changes and permission checks
+- 💬 Sending group messages
+- 🗑️ Removing members and deleting groups
+
 ### Enhanced Features Demo
 
 Run the comprehensive demo showcasing all enhanced features:
@@ -1015,6 +1033,7 @@ For security issues, please email security@emsg-protocol.org instead of using th
 - 📧 [Security Issues](mailto:security@emsg-protocol.org)
 
 ### Examples & Demos
+- 👥 [Group Management Demo](examples/group_management_demo.go) - Group creation, roles, and admin features
 - 🎯 [Enhanced Features Demo](examples/enhanced_features_demo.go) - Comprehensive feature showcase
 - 📨 [Send Message Example](examples/send_message.go) - Basic message sending
 - 👤 [User Registration Example](examples/register_user.go) - User registration
@@ -1030,6 +1049,9 @@ For security issues, please email security@emsg-protocol.org instead of using th
 ## 🎉 Enhanced Features Summary
 
 This EMSG Client SDK includes comprehensive enhancements that make it production-ready for enterprise applications:
+
+### 👥 **Group Management**
+Create and manage groups with roles (Owner, Admin, Moderator, Member, Guest), add/remove participants, and verifiable control messages.
 
 ### ✅ **System Messages**
 Built-in support for common system events with 5 predefined types and custom message builder
