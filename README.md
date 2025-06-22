@@ -12,8 +12,12 @@ A cross-platform, developer-friendly client SDK for the EMSG (Electronic Message
 - 🌐 **DNS-based Routing**: Resolve EMSG addresses via DNS TXT records
 - 📨 **Message Management**: Compose, sign, and send EMSG messages
 - 🔒 **Authentication**: Generate signed authentication headers for API requests
+- ⚙️ **System Messages**: Built-in support for system events (joined, left, removed, admin_changed, group_created)
+- 🔄 **Retry Logic**: Configurable retry strategies with exponential backoff for rate limiting
+- 🪝 **Developer Hooks**: Before/after send callbacks for custom logging and processing
 - 🏗️ **Clean API**: Idiomatic Go package structure with comprehensive documentation
-- ✅ **Well Tested**: Comprehensive unit tests for all modules
+- 🧪 **Integration Testing**: Mock and real server testing capabilities
+- ✅ **Well Tested**: 50+ unit tests with comprehensive coverage
 
 ## Installation
 
@@ -293,6 +297,110 @@ messages, err := emsgClient.GetMessages("alice#example.com")
 serverInfo, err := emsgClient.ResolveDomain("example.com")
 ```
 
+## Enhanced Features
+
+### System Messages
+
+The SDK provides built-in support for system message types commonly used in messaging applications:
+
+```go
+// Create system message for user joining
+joinedMsg, err := message.NewUserJoinedMessage(
+    "system#example.com",
+    []string{"group#example.com"},
+    "alice#example.com",  // actor (who joined)
+    "team-alpha",         // group ID
+)
+
+// Create system message for user leaving
+leftMsg, err := message.NewUserLeftMessage(
+    "system#example.com",
+    []string{"group#example.com"},
+    "bob#example.com",    // actor (who left)
+    "team-alpha",         // group ID
+)
+
+// Create system message for user being removed
+removedMsg, err := message.NewUserRemovedMessage(
+    "system#example.com",
+    []string{"group#example.com"},
+    "admin#example.com",  // actor (who removed)
+    "charlie#example.com", // target (who was removed)
+    "team-alpha",         // group ID
+)
+
+// Create custom system message
+customMsg, err := emsgClient.ComposeSystemMessage().
+    Type("system:custom_event").
+    Actor("user#example.com").
+    Target("resource#example.com").
+    GroupID("project-gamma").
+    Metadata("action", "file_uploaded").
+    Metadata("filename", "document.pdf").
+    Build("system#example.com", []string{"team#example.com"})
+
+// Check if message is a system message
+if msg.IsSystemMessage() {
+    systemData, err := msg.GetSystemMessage()
+    fmt.Printf("System event: %s by %s\n", systemData.Type, systemData.Actor)
+}
+```
+
+### Retry Logic and Rate Limiting
+
+Configure automatic retry behavior for handling rate limits and network issues:
+
+```go
+config := client.DefaultConfig()
+config.KeyPair = keyPair
+
+// Configure retry strategy
+config.RetryStrategy = &client.RetryStrategy{
+    MaxRetries:      5,                    // Maximum retry attempts
+    InitialDelay:    1 * time.Second,      // Initial delay before first retry
+    MaxDelay:        30 * time.Second,     // Maximum delay between retries
+    BackoffFactor:   2.0,                  // Exponential backoff multiplier
+    RetryOn429:      true,                 // Retry on HTTP 429 (rate limit)
+    RetryOnTimeout:  true,                 // Retry on timeout errors
+}
+
+emsgClient := client.New(config)
+
+// Messages will automatically retry on rate limits with exponential backoff
+err := emsgClient.SendMessage(msg)
+```
+
+### Developer Hooks
+
+Add custom logic before and after message sending:
+
+```go
+config := client.DefaultConfig()
+config.KeyPair = keyPair
+
+// Hook called before sending each message
+config.BeforeSend = func(msg *message.Message) error {
+    log.Printf("Sending message from %s to %v", msg.From, msg.To)
+
+    // Add custom headers, modify message, or perform validation
+    if msg.Subject == "" {
+        msg.Subject = "Auto-generated subject"
+    }
+
+    return nil // Return error to abort sending
+}
+
+// Hook called after successful message sending
+config.AfterSend = func(msg *message.Message, resp *http.Response) error {
+    log.Printf("Message sent successfully with status %d", resp.StatusCode)
+
+    // Log metrics, update database, send notifications, etc.
+    return nil // Errors are logged but don't affect the send operation
+}
+
+emsgClient := client.New(config)
+```
+
 ## Command Line Examples
 
 The SDK includes example CLI applications in the `examples/` directory.
@@ -360,10 +468,12 @@ url=https://emsg.example.com pubkey=base64-encoded-public-key version=1.0
 
 ## Testing
 
-Run the test suite:
+The SDK includes comprehensive unit tests and integration tests:
+
+### Unit Tests
 
 ```bash
-# Run all tests
+# Run all unit tests
 go test ./test/...
 
 # Run tests with coverage
@@ -373,32 +483,66 @@ go test -cover ./test/...
 go test ./test/ -run TestGenerateKeyPair
 ```
 
+### Integration Tests
+
+```bash
+# Run mock server integration tests
+go test ./integration/ -v
+
+# Run tests against real EMSG server (sandipwalke.com)
+INTEGRATION_TEST=real go test ./integration/ -run TestWithRealEMSGServer -v
+
+# Run retry logic tests
+INTEGRATION_TEST=retry go test ./integration/ -run TestRetryWithRealServer -v
+
+# Run performance tests
+INTEGRATION_TEST=performance go test ./integration/ -run TestPerformance -v
+```
+
+### Enhanced Features Demo
+
+Run the comprehensive demo showcasing all enhanced features:
+
+```bash
+go run examples/enhanced_features_demo.go
+```
+
 ## Project Structure
 
 ```
 emsg-client-sdk/
-├── go.mod                 # Module definition
-├── client/                # High-level API layer
+├── go.mod                      # Module definition
+├── client/                     # High-level API layer with retry logic and hooks
 │   └── client.go
-├── keymgmt/               # Key generation and storage
+├── keymgmt/                    # Key generation and storage
 │   └── key.go
-├── auth/                  # Authentication headers
+├── auth/                       # Authentication headers
 │   └── auth.go
-├── message/               # Message creation and validation
+├── message/                    # Message creation, validation, and system messages
 │   └── message.go
-├── dns/                   # EMSG DNS resolution
+├── dns/                        # EMSG DNS resolution
 │   └── resolver.go
-├── utils/                 # Helper functions
+├── utils/                      # Helper functions
 │   └── helpers.go
-├── examples/              # CLI examples
+├── examples/                   # CLI examples and demos
 │   ├── send_message.go
 │   ├── register_user.go
-│   └── get_messages.go
-├── test/                  # Test files
+│   ├── get_messages.go
+│   └── enhanced_features_demo.go
+├── test/                       # Unit tests
 │   ├── keymgmt_test.go
 │   ├── auth_test.go
 │   ├── utils_test.go
-│   └── message_test.go
+│   ├── message_test.go
+│   ├── system_message_test.go
+│   └── client_enhancements_test.go
+├── integration/                # Integration tests
+│   ├── integration_test.go
+│   ├── docker_test.go
+│   └── README.md
+├── DEPLOYMENT.md               # Production deployment guide
+├── QUICK_START.md              # 5-minute setup guide
+├── PROJECT_SUMMARY.md          # Executive summary
 └── README.md
 ```
 

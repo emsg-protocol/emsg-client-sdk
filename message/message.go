@@ -13,6 +13,15 @@ import (
 	"github.com/emsg-protocol/emsg-client-sdk/utils"
 )
 
+// System message type constants
+const (
+	SystemJoined       = "system:joined"
+	SystemLeft         = "system:left"
+	SystemRemoved      = "system:removed"
+	SystemAdminChanged = "system:admin_changed"
+	SystemGroupCreated = "system:group_created"
+)
+
 // Message represents an EMSG message structure
 type Message struct {
 	From      string   `json:"from"`
@@ -24,6 +33,22 @@ type Message struct {
 	Timestamp int64    `json:"timestamp"`
 	MessageID string   `json:"message_id,omitempty"`
 	Signature string   `json:"signature,omitempty"`
+	Type      string   `json:"type,omitempty"` // For system messages
+}
+
+// SystemMessage represents a system message with structured data
+type SystemMessage struct {
+	Type      string         `json:"type"`
+	Actor     string         `json:"actor,omitempty"`    // Who performed the action
+	Target    string         `json:"target,omitempty"`   // Who was affected
+	GroupID   string         `json:"group_id,omitempty"` // Group context
+	Metadata  map[string]any `json:"metadata,omitempty"` // Additional data
+	Timestamp int64          `json:"timestamp"`
+}
+
+// SystemMessageBuilder helps construct system messages
+type SystemMessageBuilder struct {
+	systemMsg *SystemMessage
 }
 
 // MessageBuilder helps construct EMSG messages
@@ -120,6 +145,33 @@ func (mb *MessageBuilder) validate() error {
 
 	if mb.message.Body == "" {
 		return fmt.Errorf("message body is required")
+	}
+
+	// Validate system message if it's a system type
+	if strings.HasPrefix(mb.message.Type, "system:") {
+		if err := mb.validateSystemMessage(); err != nil {
+			return fmt.Errorf("invalid system message: %w", err)
+		}
+	}
+
+	return nil
+}
+
+// validateSystemMessage validates system message specific requirements
+func (mb *MessageBuilder) validateSystemMessage() error {
+	// Try to parse the system message from the body
+	var systemMsg SystemMessage
+	err := json.Unmarshal([]byte(mb.message.Body), &systemMsg)
+	if err != nil {
+		return fmt.Errorf("invalid system message format in body: %w", err)
+	}
+
+	if systemMsg.Type == "" {
+		return fmt.Errorf("system message type is required")
+	}
+
+	if systemMsg.Type != mb.message.Type {
+		return fmt.Errorf("system message type mismatch: body has %s, message has %s", systemMsg.Type, mb.message.Type)
 	}
 
 	return nil
@@ -247,6 +299,14 @@ func (msg *Message) Validate() error {
 		return fmt.Errorf("invalid timestamp")
 	}
 
+	// Validate system message if it's a system type
+	if msg.IsSystemMessage() {
+		_, err := msg.GetSystemMessage()
+		if err != nil {
+			return fmt.Errorf("invalid system message: %w", err)
+		}
+	}
+
 	return nil
 }
 
@@ -275,4 +335,143 @@ func (msg *Message) Clone() *Message {
 	}
 
 	return &clone
+}
+
+// NewSystemMessageBuilder creates a new system message builder
+func NewSystemMessageBuilder() *SystemMessageBuilder {
+	return &SystemMessageBuilder{
+		systemMsg: &SystemMessage{
+			Timestamp: time.Now().Unix(),
+			Metadata:  make(map[string]any),
+		},
+	}
+}
+
+// Type sets the system message type
+func (smb *SystemMessageBuilder) Type(msgType string) *SystemMessageBuilder {
+	smb.systemMsg.Type = msgType
+	return smb
+}
+
+// Actor sets who performed the action
+func (smb *SystemMessageBuilder) Actor(actor string) *SystemMessageBuilder {
+	smb.systemMsg.Actor = actor
+	return smb
+}
+
+// Target sets who was affected by the action
+func (smb *SystemMessageBuilder) Target(target string) *SystemMessageBuilder {
+	smb.systemMsg.Target = target
+	return smb
+}
+
+// GroupID sets the group context
+func (smb *SystemMessageBuilder) GroupID(groupID string) *SystemMessageBuilder {
+	smb.systemMsg.GroupID = groupID
+	return smb
+}
+
+// Metadata adds metadata to the system message
+func (smb *SystemMessageBuilder) Metadata(key string, value any) *SystemMessageBuilder {
+	smb.systemMsg.Metadata[key] = value
+	return smb
+}
+
+// Build creates a regular Message from the system message
+func (smb *SystemMessageBuilder) Build(from string, to []string) (*Message, error) {
+	if smb.systemMsg.Type == "" {
+		return nil, fmt.Errorf("system message type is required")
+	}
+
+	// Serialize system message to JSON for the body
+	systemData, err := json.Marshal(smb.systemMsg)
+	if err != nil {
+		return nil, fmt.Errorf("failed to serialize system message: %w", err)
+	}
+
+	// Create regular message with system data
+	msg := &Message{
+		From:      from,
+		To:        to,
+		Body:      string(systemData),
+		Type:      smb.systemMsg.Type,
+		GroupID:   smb.systemMsg.GroupID,
+		Timestamp: smb.systemMsg.Timestamp,
+	}
+
+	return msg, nil
+}
+
+// Helper functions for common system message types
+
+// NewUserJoinedMessage creates a system message for user joining
+func NewUserJoinedMessage(from string, to []string, actor, groupID string) (*Message, error) {
+	return NewSystemMessageBuilder().
+		Type(SystemJoined).
+		Actor(actor).
+		GroupID(groupID).
+		Metadata("action", "joined").
+		Build(from, to)
+}
+
+// NewUserLeftMessage creates a system message for user leaving
+func NewUserLeftMessage(from string, to []string, actor, groupID string) (*Message, error) {
+	return NewSystemMessageBuilder().
+		Type(SystemLeft).
+		Actor(actor).
+		GroupID(groupID).
+		Metadata("action", "left").
+		Build(from, to)
+}
+
+// NewUserRemovedMessage creates a system message for user being removed
+func NewUserRemovedMessage(from string, to []string, actor, target, groupID string) (*Message, error) {
+	return NewSystemMessageBuilder().
+		Type(SystemRemoved).
+		Actor(actor).
+		Target(target).
+		GroupID(groupID).
+		Metadata("action", "removed").
+		Build(from, to)
+}
+
+// NewAdminChangedMessage creates a system message for admin change
+func NewAdminChangedMessage(from string, to []string, actor, target, groupID string) (*Message, error) {
+	return NewSystemMessageBuilder().
+		Type(SystemAdminChanged).
+		Actor(actor).
+		Target(target).
+		GroupID(groupID).
+		Metadata("action", "admin_changed").
+		Build(from, to)
+}
+
+// NewGroupCreatedMessage creates a system message for group creation
+func NewGroupCreatedMessage(from string, to []string, actor, groupID string) (*Message, error) {
+	return NewSystemMessageBuilder().
+		Type(SystemGroupCreated).
+		Actor(actor).
+		GroupID(groupID).
+		Metadata("action", "group_created").
+		Build(from, to)
+}
+
+// IsSystemMessage checks if a message is a system message
+func (msg *Message) IsSystemMessage() bool {
+	return strings.HasPrefix(msg.Type, "system:")
+}
+
+// GetSystemMessage parses the system message data from the body
+func (msg *Message) GetSystemMessage() (*SystemMessage, error) {
+	if !msg.IsSystemMessage() {
+		return nil, fmt.Errorf("not a system message")
+	}
+
+	var systemMsg SystemMessage
+	err := json.Unmarshal([]byte(msg.Body), &systemMsg)
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse system message: %w", err)
+	}
+
+	return &systemMsg, nil
 }
