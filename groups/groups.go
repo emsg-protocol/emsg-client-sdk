@@ -175,8 +175,8 @@ func (gm *GroupManager) DeleteGroup(id, requesterAddress string) error {
 		return fmt.Errorf("group %s not found", id)
 	}
 
-	// Check permissions
-	if !group.HasPermission(requesterAddress, PermissionDeleteGroup) {
+	// Check permissions (internal method without lock)
+	if !group.hasPermissionInternal(requesterAddress, PermissionDeleteGroup) {
 		return fmt.Errorf("insufficient permissions to delete group")
 	}
 
@@ -202,8 +202,8 @@ func (g *Group) AddMember(address, invitedBy string, role GroupRole) error {
 	g.mutex.Lock()
 	defer g.mutex.Unlock()
 
-	// Check if inviter has permission
-	if !g.HasPermission(invitedBy, PermissionAddMember) {
+	// Check if inviter has permission (internal method without lock)
+	if !g.hasPermissionInternal(invitedBy, PermissionAddMember) {
 		return fmt.Errorf("insufficient permissions to add member")
 	}
 
@@ -234,8 +234,8 @@ func (g *Group) RemoveMember(address, requesterAddress string) error {
 	g.mutex.Lock()
 	defer g.mutex.Unlock()
 
-	// Check if requester has permission
-	if !g.HasPermission(requesterAddress, PermissionRemoveMember) {
+	// Check if requester has permission (internal method without lock)
+	if !g.hasPermissionInternal(requesterAddress, PermissionRemoveMember) {
 		return fmt.Errorf("insufficient permissions to remove member")
 	}
 
@@ -265,8 +265,8 @@ func (g *Group) ChangeRole(address, requesterAddress string, newRole GroupRole) 
 	g.mutex.Lock()
 	defer g.mutex.Unlock()
 
-	// Check if requester has permission
-	if !g.HasPermission(requesterAddress, PermissionChangeRole) {
+	// Check if requester has permission (internal method without lock)
+	if !g.hasPermissionInternal(requesterAddress, PermissionChangeRole) {
 		return fmt.Errorf("insufficient permissions to change role")
 	}
 
@@ -296,6 +296,27 @@ func (g *Group) HasPermission(address string, permission Permission) bool {
 	g.mutex.RLock()
 	defer g.mutex.RUnlock()
 
+	member, exists := g.Members[address]
+	if !exists {
+		return false
+	}
+
+	permissions, exists := g.Settings.Permissions[member.Role]
+	if !exists {
+		return false
+	}
+
+	for _, p := range permissions {
+		if p == permission {
+			return true
+		}
+	}
+
+	return false
+}
+
+// hasPermissionInternal checks if a member has a specific permission (internal method without lock)
+func (g *Group) hasPermissionInternal(address string, permission Permission) bool {
 	member, exists := g.Members[address]
 	if !exists {
 		return false
@@ -414,6 +435,7 @@ func CreateGroupMessage(groupID, action, actor string, data map[string]any) (*me
 		To:        []string{groupID},
 		Type:      fmt.Sprintf("group:%s", action),
 		Body:      string(bodyData),
+		GroupID:   groupID,
 		Timestamp: time.Now().Unix(),
 		MessageID: fmt.Sprintf("group_%s_%d", action, time.Now().UnixNano()),
 	}

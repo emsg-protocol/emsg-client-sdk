@@ -16,6 +16,7 @@ import (
 	"github.com/emsg-protocol/emsg-client-sdk/delivery"
 	"github.com/emsg-protocol/emsg-client-sdk/dns"
 	"github.com/emsg-protocol/emsg-client-sdk/encryption"
+	"github.com/emsg-protocol/emsg-client-sdk/groups"
 	"github.com/emsg-protocol/emsg-client-sdk/keymgmt"
 	"github.com/emsg-protocol/emsg-client-sdk/message"
 	"github.com/emsg-protocol/emsg-client-sdk/notifications"
@@ -60,6 +61,7 @@ type Client struct {
 	webSocketClient     *websocket.WebSocketClient
 	deliveryTracker     *delivery.DeliveryTracker
 	attachmentManager   *attachments.AttachmentManager
+	groupManager        *groups.GroupManager
 }
 
 // Config holds configuration for the EMSG client
@@ -82,6 +84,7 @@ type Config struct {
 	EnableDeliveryTracking bool
 	DeliveryRetryStrategy  *delivery.RetryStrategy
 	AttachmentConfig       *attachments.AttachmentConfig
+	EnableGroupManagement  bool
 }
 
 // DefaultConfig returns a default client configuration
@@ -102,6 +105,7 @@ func DefaultConfig() *Config {
 		EnableDeliveryTracking: false,
 		DeliveryRetryStrategy:  delivery.DefaultRetryStrategy(),
 		AttachmentConfig:       attachments.DefaultAttachmentConfig(),
+		EnableGroupManagement:  true,
 	}
 }
 
@@ -174,6 +178,11 @@ func New(config *Config) *Client {
 		} else {
 			client.attachmentManager = attachmentManager
 		}
+	}
+
+	// Initialize group manager if enabled
+	if config.EnableGroupManagement {
+		client.groupManager = groups.NewGroupManager()
 	}
 
 	return client
@@ -859,4 +868,290 @@ func (c *Client) GetAttachmentData(attachment *attachments.Attachment) ([]byte, 
 // IsAttachmentManagerEnabled returns true if attachment manager is enabled
 func (c *Client) IsAttachmentManagerEnabled() bool {
 	return c.attachmentManager != nil
+}
+
+// Group management methods
+
+// CreateGroup creates a new group
+func (c *Client) CreateGroup(groupID, name, createdBy string, settings *groups.GroupSettings) (*groups.Group, error) {
+	if c.groupManager == nil {
+		return nil, fmt.Errorf("group management not enabled")
+	}
+	return c.groupManager.CreateGroup(groupID, name, createdBy, settings)
+}
+
+// GetGroup retrieves a group by ID
+func (c *Client) GetGroup(groupID string) (*groups.Group, error) {
+	if c.groupManager == nil {
+		return nil, fmt.Errorf("group management not enabled")
+	}
+	return c.groupManager.GetGroup(groupID)
+}
+
+// DeleteGroup deletes a group
+func (c *Client) DeleteGroup(groupID, requesterAddress string) error {
+	if c.groupManager == nil {
+		return fmt.Errorf("group management not enabled")
+	}
+	return c.groupManager.DeleteGroup(groupID, requesterAddress)
+}
+
+// ListGroups returns all groups
+func (c *Client) ListGroups() []*groups.Group {
+	if c.groupManager == nil {
+		return nil
+	}
+	return c.groupManager.ListGroups()
+}
+
+// AddGroupMember adds a member to a group
+func (c *Client) AddGroupMember(groupID, memberAddress, invitedBy string, role groups.GroupRole) error {
+	if c.groupManager == nil {
+		return fmt.Errorf("group management not enabled")
+	}
+
+	group, err := c.groupManager.GetGroup(groupID)
+	if err != nil {
+		return fmt.Errorf("failed to get group: %w", err)
+	}
+
+	return group.AddMember(memberAddress, invitedBy, role)
+}
+
+// RemoveGroupMember removes a member from a group
+func (c *Client) RemoveGroupMember(groupID, memberAddress, requesterAddress string) error {
+	if c.groupManager == nil {
+		return fmt.Errorf("group management not enabled")
+	}
+
+	group, err := c.groupManager.GetGroup(groupID)
+	if err != nil {
+		return fmt.Errorf("failed to get group: %w", err)
+	}
+
+	return group.RemoveMember(memberAddress, requesterAddress)
+}
+
+// ChangeGroupMemberRole changes a member's role in a group
+func (c *Client) ChangeGroupMemberRole(groupID, memberAddress, requesterAddress string, newRole groups.GroupRole) error {
+	if c.groupManager == nil {
+		return fmt.Errorf("group management not enabled")
+	}
+
+	group, err := c.groupManager.GetGroup(groupID)
+	if err != nil {
+		return fmt.Errorf("failed to get group: %w", err)
+	}
+
+	return group.ChangeRole(memberAddress, requesterAddress, newRole)
+}
+
+// GetGroupMembers returns all members of a group
+func (c *Client) GetGroupMembers(groupID string) ([]*groups.GroupMember, error) {
+	if c.groupManager == nil {
+		return nil, fmt.Errorf("group management not enabled")
+	}
+
+	group, err := c.groupManager.GetGroup(groupID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get group: %w", err)
+	}
+
+	return group.GetMembers(), nil
+}
+
+// GetGroupMember returns a specific member of a group
+func (c *Client) GetGroupMember(groupID, memberAddress string) (*groups.GroupMember, error) {
+	if c.groupManager == nil {
+		return nil, fmt.Errorf("group management not enabled")
+	}
+
+	group, err := c.groupManager.GetGroup(groupID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get group: %w", err)
+	}
+
+	return group.GetMember(memberAddress)
+}
+
+// GetGroupMembersByRole returns members with a specific role in a group
+func (c *Client) GetGroupMembersByRole(groupID string, role groups.GroupRole) ([]*groups.GroupMember, error) {
+	if c.groupManager == nil {
+		return nil, fmt.Errorf("group management not enabled")
+	}
+
+	group, err := c.groupManager.GetGroup(groupID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get group: %w", err)
+	}
+
+	return group.GetMembersByRole(role), nil
+}
+
+// HasGroupPermission checks if a member has a specific permission in a group
+func (c *Client) HasGroupPermission(groupID, memberAddress string, permission groups.Permission) (bool, error) {
+	if c.groupManager == nil {
+		return false, fmt.Errorf("group management not enabled")
+	}
+
+	group, err := c.groupManager.GetGroup(groupID)
+	if err != nil {
+		return false, fmt.Errorf("failed to get group: %w", err)
+	}
+
+	return group.HasPermission(memberAddress, permission), nil
+}
+
+// IsGroupManagementEnabled returns true if group management is enabled
+func (c *Client) IsGroupManagementEnabled() bool {
+	return c.groupManager != nil
+}
+
+// SendGroupMessage sends a message to a group
+func (c *Client) SendGroupMessage(groupID, from, body string) error {
+	if c.keyPair == nil {
+		return fmt.Errorf("no key pair configured")
+	}
+
+	// Create group message
+	msg, err := c.ComposeMessage().
+		From(from).
+		To(groupID).
+		GroupID(groupID).
+		Body(body).
+		Build()
+	if err != nil {
+		return fmt.Errorf("failed to build group message: %w", err)
+	}
+
+	return c.SendMessage(msg)
+}
+
+// SendGroupManagementMessage sends a group management system message
+func (c *Client) SendGroupManagementMessage(groupID, action, actor string, data map[string]any) error {
+	if c.keyPair == nil {
+		return fmt.Errorf("no key pair configured")
+	}
+
+	// Create group management message
+	msg, err := groups.CreateGroupMessage(groupID, action, actor, data)
+	if err != nil {
+		return fmt.Errorf("failed to create group management message: %w", err)
+	}
+
+	return c.SendMessage(msg)
+}
+
+// SendGroupMemberAddedMessage sends a system message when a member is added
+func (c *Client) SendGroupMemberAddedMessage(groupID, actor, newMember string, role groups.GroupRole) error {
+	data := map[string]any{
+		"member": newMember,
+		"role":   string(role),
+		"action": "member_added",
+	}
+	return c.SendGroupManagementMessage(groupID, "member_added", actor, data)
+}
+
+// SendGroupMemberRemovedMessage sends a system message when a member is removed
+func (c *Client) SendGroupMemberRemovedMessage(groupID, actor, removedMember string) error {
+	data := map[string]any{
+		"member": removedMember,
+		"action": "member_removed",
+	}
+	return c.SendGroupManagementMessage(groupID, "member_removed", actor, data)
+}
+
+// SendGroupRoleChangedMessage sends a system message when a member's role is changed
+func (c *Client) SendGroupRoleChangedMessage(groupID, actor, member string, oldRole, newRole groups.GroupRole) error {
+	data := map[string]any{
+		"member":   member,
+		"old_role": string(oldRole),
+		"new_role": string(newRole),
+		"action":   "role_changed",
+	}
+	return c.SendGroupManagementMessage(groupID, "role_changed", actor, data)
+}
+
+// SendGroupCreatedMessage sends a system message when a group is created
+func (c *Client) SendGroupCreatedMessage(groupID, creator string) error {
+	data := map[string]any{
+		"creator": creator,
+		"action":  "group_created",
+	}
+	return c.SendGroupManagementMessage(groupID, "group_created", creator, data)
+}
+
+// CreateGroupWithMessage creates a group and sends a creation message
+func (c *Client) CreateGroupWithMessage(groupID, name, createdBy string, settings *groups.GroupSettings) (*groups.Group, error) {
+	// Create the group
+	group, err := c.CreateGroup(groupID, name, createdBy, settings)
+	if err != nil {
+		return nil, err
+	}
+
+	// Send group creation message
+	err = c.SendGroupCreatedMessage(groupID, createdBy)
+	if err != nil {
+		log.Printf("Warning: failed to send group creation message: %v", err)
+	}
+
+	return group, nil
+}
+
+// AddGroupMemberWithMessage adds a member to a group and sends a notification message
+func (c *Client) AddGroupMemberWithMessage(groupID, memberAddress, invitedBy string, role groups.GroupRole) error {
+	// Add the member
+	err := c.AddGroupMember(groupID, memberAddress, invitedBy, role)
+	if err != nil {
+		return err
+	}
+
+	// Send member added message
+	err = c.SendGroupMemberAddedMessage(groupID, invitedBy, memberAddress, role)
+	if err != nil {
+		log.Printf("Warning: failed to send member added message: %v", err)
+	}
+
+	return nil
+}
+
+// RemoveGroupMemberWithMessage removes a member from a group and sends a notification message
+func (c *Client) RemoveGroupMemberWithMessage(groupID, memberAddress, requesterAddress string) error {
+	// Remove the member
+	err := c.RemoveGroupMember(groupID, memberAddress, requesterAddress)
+	if err != nil {
+		return err
+	}
+
+	// Send member removed message
+	err = c.SendGroupMemberRemovedMessage(groupID, requesterAddress, memberAddress)
+	if err != nil {
+		log.Printf("Warning: failed to send member removed message: %v", err)
+	}
+
+	return nil
+}
+
+// ChangeGroupMemberRoleWithMessage changes a member's role and sends a notification message
+func (c *Client) ChangeGroupMemberRoleWithMessage(groupID, memberAddress, requesterAddress string, newRole groups.GroupRole) error {
+	// Get current role for the message
+	member, err := c.GetGroupMember(groupID, memberAddress)
+	if err != nil {
+		return fmt.Errorf("failed to get current member info: %w", err)
+	}
+	oldRole := member.Role
+
+	// Change the role
+	err = c.ChangeGroupMemberRole(groupID, memberAddress, requesterAddress, newRole)
+	if err != nil {
+		return err
+	}
+
+	// Send role changed message
+	err = c.SendGroupRoleChangedMessage(groupID, requesterAddress, memberAddress, oldRole, newRole)
+	if err != nil {
+		log.Printf("Warning: failed to send role changed message: %v", err)
+	}
+
+	return nil
 }

@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/emsg-protocol/emsg-client-sdk/client"
+	"github.com/emsg-protocol/emsg-client-sdk/groups"
 	"github.com/emsg-protocol/emsg-client-sdk/keymgmt"
 	"github.com/emsg-protocol/emsg-client-sdk/message"
 )
@@ -347,5 +348,182 @@ func TestClientKeyPairManagement(t *testing.T) {
 	retrievedKeyPair2 := emsgClient.GetKeyPair()
 	if retrievedKeyPair2.PublicKeyBase64() != keyPair2.PublicKeyBase64() {
 		t.Error("Key pair was not updated correctly")
+	}
+}
+
+// TestClientGroupManagement tests group management functionality in client
+func TestClientGroupManagement(t *testing.T) {
+	// Generate test key pair
+	keyPair, err := keymgmt.GenerateKeyPair()
+	if err != nil {
+		t.Fatalf("Failed to generate key pair: %v", err)
+	}
+
+	// Create client with group management enabled
+	config := client.DefaultConfig()
+	config.KeyPair = keyPair
+	config.EnableGroupManagement = true
+	emsgClient := client.New(config)
+
+	// Test that group management is enabled
+	if !emsgClient.IsGroupManagementEnabled() {
+		t.Error("Group management should be enabled")
+	}
+
+	// Test creating a group
+	groupID := "test-group#example.com"
+	groupName := "Test Group"
+	owner := "alice#example.com"
+
+	group, err := emsgClient.CreateGroup(groupID, groupName, owner, nil)
+	if err != nil {
+		t.Fatalf("Failed to create group: %v", err)
+	}
+
+	if group.ID != groupID {
+		t.Errorf("Expected group ID %s, got %s", groupID, group.ID)
+	}
+
+	if group.Name != groupName {
+		t.Errorf("Expected group name %s, got %s", groupName, group.Name)
+	}
+
+	// Test getting the group
+	retrievedGroup, err := emsgClient.GetGroup(groupID)
+	if err != nil {
+		t.Fatalf("Failed to get group: %v", err)
+	}
+
+	if retrievedGroup.ID != groupID {
+		t.Errorf("Retrieved group ID mismatch: expected %s, got %s", groupID, retrievedGroup.ID)
+	}
+
+	// Test adding a member
+	member := "bob#example.com"
+	err = emsgClient.AddGroupMember(groupID, member, owner, groups.RoleMember)
+	if err != nil {
+		t.Fatalf("Failed to add group member: %v", err)
+	}
+
+	// Test getting group members
+	members, err := emsgClient.GetGroupMembers(groupID)
+	if err != nil {
+		t.Fatalf("Failed to get group members: %v", err)
+	}
+
+	if len(members) != 2 { // owner + member
+		t.Errorf("Expected 2 members, got %d", len(members))
+	}
+
+	// Test getting specific member
+	bobMember, err := emsgClient.GetGroupMember(groupID, member)
+	if err != nil {
+		t.Fatalf("Failed to get specific member: %v", err)
+	}
+
+	if bobMember.Role != groups.RoleMember {
+		t.Errorf("Expected role %s, got %s", groups.RoleMember, bobMember.Role)
+	}
+
+	// Test changing member role
+	err = emsgClient.ChangeGroupMemberRole(groupID, member, owner, groups.RoleAdmin)
+	if err != nil {
+		t.Fatalf("Failed to change member role: %v", err)
+	}
+
+	// Verify role change
+	updatedMember, err := emsgClient.GetGroupMember(groupID, member)
+	if err != nil {
+		t.Fatalf("Failed to get updated member: %v", err)
+	}
+
+	if updatedMember.Role != groups.RoleAdmin {
+		t.Errorf("Expected role %s, got %s", groups.RoleAdmin, updatedMember.Role)
+	}
+
+	// Test getting members by role
+	admins, err := emsgClient.GetGroupMembersByRole(groupID, groups.RoleAdmin)
+	if err != nil {
+		t.Fatalf("Failed to get admins: %v", err)
+	}
+
+	if len(admins) != 1 {
+		t.Errorf("Expected 1 admin, got %d", len(admins))
+	}
+
+	// Test permission checking
+	hasPermission, err := emsgClient.HasGroupPermission(groupID, owner, groups.PermissionDeleteGroup)
+	if err != nil {
+		t.Fatalf("Failed to check permission: %v", err)
+	}
+
+	if !hasPermission {
+		t.Error("Owner should have delete group permission")
+	}
+
+	// Test removing member
+	err = emsgClient.RemoveGroupMember(groupID, member, owner)
+	if err != nil {
+		t.Fatalf("Failed to remove member: %v", err)
+	}
+
+	// Verify member is removed
+	_, err = emsgClient.GetGroupMember(groupID, member)
+	if err == nil {
+		t.Error("Expected error when getting removed member")
+	}
+
+	// Test listing groups
+	allGroups := emsgClient.ListGroups()
+	if len(allGroups) != 1 {
+		t.Errorf("Expected 1 group, got %d", len(allGroups))
+	}
+
+	// Test deleting group
+	err = emsgClient.DeleteGroup(groupID, owner)
+	if err != nil {
+		t.Fatalf("Failed to delete group: %v", err)
+	}
+
+	// Verify group is deleted
+	_, err = emsgClient.GetGroup(groupID)
+	if err == nil {
+		t.Error("Expected error when getting deleted group")
+	}
+}
+
+// TestClientGroupManagementDisabled tests behavior when group management is disabled
+func TestClientGroupManagementDisabled(t *testing.T) {
+	// Generate test key pair
+	keyPair, err := keymgmt.GenerateKeyPair()
+	if err != nil {
+		t.Fatalf("Failed to generate key pair: %v", err)
+	}
+
+	// Create client with group management disabled
+	config := client.DefaultConfig()
+	config.KeyPair = keyPair
+	config.EnableGroupManagement = false
+	emsgClient := client.New(config)
+
+	// Test that group management is disabled
+	if emsgClient.IsGroupManagementEnabled() {
+		t.Error("Group management should be disabled")
+	}
+
+	// Test that group operations return errors
+	_, err = emsgClient.CreateGroup("test#example.com", "Test", "alice#example.com", nil)
+	if err == nil {
+		t.Error("Expected error when group management is disabled")
+	}
+
+	_, err = emsgClient.GetGroup("test#example.com")
+	if err == nil {
+		t.Error("Expected error when group management is disabled")
+	}
+
+	err = emsgClient.AddGroupMember("test#example.com", "bob#example.com", "alice#example.com", groups.RoleMember)
+	if err == nil {
+		t.Error("Expected error when group management is disabled")
 	}
 }
