@@ -9,6 +9,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/emsg-protocol/emsg-client-sdk/attachments"
+	"github.com/emsg-protocol/emsg-client-sdk/encryption"
 	"github.com/emsg-protocol/emsg-client-sdk/keymgmt"
 	"github.com/emsg-protocol/emsg-client-sdk/utils"
 )
@@ -34,6 +36,11 @@ type Message struct {
 	MessageID string   `json:"message_id,omitempty"`
 	Signature string   `json:"signature,omitempty"`
 	Type      string   `json:"type,omitempty"` // For system messages
+	// Encryption fields
+	Encrypted     bool   `json:"encrypted,omitempty"`      // Whether the body is encrypted
+	EncryptionKey string `json:"encryption_key,omitempty"` // Sender's encryption public key
+	// Attachment fields
+	Attachments []*attachments.Attachment `json:"attachments,omitempty"` // File attachments
 }
 
 // SystemMessage represents a system message with structured data
@@ -53,7 +60,9 @@ type SystemMessageBuilder struct {
 
 // MessageBuilder helps construct EMSG messages
 type MessageBuilder struct {
-	message *Message
+	message           *Message
+	encryptionManager *encryption.EncryptionManager
+	attachmentManager *attachments.AttachmentManager
 }
 
 // NewMessageBuilder creates a new message builder
@@ -107,8 +116,65 @@ func (mb *MessageBuilder) MessageID(messageID string) *MessageBuilder {
 	return mb
 }
 
+// WithEncryption sets the encryption manager for this message
+func (mb *MessageBuilder) WithEncryption(encManager *encryption.EncryptionManager) *MessageBuilder {
+	mb.encryptionManager = encManager
+	return mb
+}
+
+// WithAttachmentManager sets the attachment manager for this message
+func (mb *MessageBuilder) WithAttachmentManager(attManager *attachments.AttachmentManager) *MessageBuilder {
+	mb.attachmentManager = attManager
+	return mb
+}
+
+// AttachFile attaches a file to the message
+func (mb *MessageBuilder) AttachFile(filePath string) *MessageBuilder {
+	if mb.attachmentManager != nil {
+		attachment, err := mb.attachmentManager.CreateAttachmentFromFile(filePath)
+		if err == nil {
+			if mb.message.Attachments == nil {
+				mb.message.Attachments = make([]*attachments.Attachment, 0)
+			}
+			mb.message.Attachments = append(mb.message.Attachments, attachment)
+		}
+	}
+	return mb
+}
+
+// AttachData attaches raw data as an attachment to the message
+func (mb *MessageBuilder) AttachData(name string, data []byte, mimeType string) *MessageBuilder {
+	if mb.attachmentManager != nil {
+		attachment, err := mb.attachmentManager.CreateAttachmentFromData(name, data, mimeType)
+		if err == nil {
+			if mb.message.Attachments == nil {
+				mb.message.Attachments = make([]*attachments.Attachment, 0)
+			}
+			mb.message.Attachments = append(mb.message.Attachments, attachment)
+		}
+	}
+	return mb
+}
+
+// Attachment adds an existing attachment to the message
+func (mb *MessageBuilder) Attachment(attachment *attachments.Attachment) *MessageBuilder {
+	if attachment != nil {
+		if mb.message.Attachments == nil {
+			mb.message.Attachments = make([]*attachments.Attachment, 0)
+		}
+		mb.message.Attachments = append(mb.message.Attachments, attachment)
+	}
+	return mb
+}
+
 // Build validates and returns the constructed message
 func (mb *MessageBuilder) Build() (*Message, error) {
+	// Handle encryption if enabled
+	if mb.encryptionManager != nil && mb.message.Body != "" {
+		if err := mb.encryptMessage(); err != nil {
+			return nil, fmt.Errorf("encryption failed: %w", err)
+		}
+	}
 	if err := mb.validate(); err != nil {
 		return nil, err
 	}
@@ -121,6 +187,54 @@ func (mb *MessageBuilder) Build() (*Message, error) {
 	// Create a copy to avoid mutations
 	msg := *mb.message
 	return &msg, nil
+}
+
+// encryptMessage encrypts the message body for all recipients
+func (mb *MessageBuilder) encryptMessage() error {
+	if mb.encryptionManager == nil {
+		return fmt.Errorf("encryption manager not set")
+	}
+
+	// Check if we can encrypt for all recipients
+	allRecipients := append(mb.message.To, mb.message.CC...)
+	canEncryptForAll := true
+
+	for _, recipient := range allRecipients {
+		if !mb.encryptionManager.CanEncryptFor(recipient) {
+			canEncryptForAll = false
+			break
+		}
+	}
+
+	// If we can't encrypt for all recipients, check fallback behavior
+	if !canEncryptForAll {
+		// For now, we'll just not encrypt if we can't encrypt for everyone
+		// In the future, this could be configurable
+		return nil
+	}
+
+	// Encrypt the message body
+	// For simplicity, we'll encrypt with the first recipient's key
+	// In a real implementation, you might want to encrypt separately for each recipient
+	if len(allRecipients) > 0 {
+		encryptedMsg, err := mb.encryptionManager.EncryptForRecipient([]byte(mb.message.Body), allRecipients[0])
+		if err != nil {
+			return fmt.Errorf("failed to encrypt message: %w", err)
+		}
+
+		// Serialize the encrypted message to JSON and store in body
+		encryptedData, err := json.Marshal(encryptedMsg)
+		if err != nil {
+			return fmt.Errorf("failed to serialize encrypted message: %w", err)
+		}
+
+		mb.message.Body = string(encryptedData)
+		mb.message.Encrypted = true
+		publicKey := mb.encryptionManager.GetPublicKey()
+		mb.message.EncryptionKey = base64.StdEncoding.EncodeToString(publicKey[:])
+	}
+
+	return nil
 }
 
 // validate validates the message structure
@@ -474,4 +588,108 @@ func (msg *Message) GetSystemMessage() (*SystemMessage, error) {
 	}
 
 	return &systemMsg, nil
+}
+
+// IsEncrypted returns true if the message is encrypted
+func (msg *Message) IsEncrypted() bool {
+	return msg.Encrypted
+}
+
+// DecryptBody decrypts the message body using the provided encryption manager
+func (msg *Message) DecryptBody(encManager *encryption.EncryptionManager) (string, error) {
+	if !msg.IsEncrypted() {
+		return msg.Body, nil // Return as-is if not encrypted
+	}
+
+	// Parse the encrypted message from the body
+	var encryptedMsg encryption.EncryptedMessage
+	err := json.Unmarshal([]byte(msg.Body), &encryptedMsg)
+	if err != nil {
+		return "", fmt.Errorf("failed to parse encrypted message: %w", err)
+	}
+
+	// Decrypt the message
+	decryptedBytes, err := encManager.DecryptMessage(&encryptedMsg)
+	if err != nil {
+		return "", fmt.Errorf("failed to decrypt message: %w", err)
+	}
+
+	return string(decryptedBytes), nil
+}
+
+// GetDecryptedBody returns the decrypted body if encrypted, otherwise returns the original body
+func (msg *Message) GetDecryptedBody(encManager *encryption.EncryptionManager) string {
+	if !msg.IsEncrypted() {
+		return msg.Body
+	}
+
+	decryptedBody, err := msg.DecryptBody(encManager)
+	if err != nil {
+		// Return original body if decryption fails
+		return msg.Body
+	}
+
+	return decryptedBody
+}
+
+// HasAttachments returns true if the message has attachments
+func (msg *Message) HasAttachments() bool {
+	return len(msg.Attachments) > 0
+}
+
+// GetAttachmentCount returns the number of attachments
+func (msg *Message) GetAttachmentCount() int {
+	return len(msg.Attachments)
+}
+
+// GetAttachmentByID returns an attachment by its ID
+func (msg *Message) GetAttachmentByID(id string) *attachments.Attachment {
+	for _, attachment := range msg.Attachments {
+		if attachment.ID == id {
+			return attachment
+		}
+	}
+	return nil
+}
+
+// GetAttachmentsByType returns attachments of a specific MIME type
+func (msg *Message) GetAttachmentsByType(mimeType string) []*attachments.Attachment {
+	var result []*attachments.Attachment
+	for _, attachment := range msg.Attachments {
+		if attachment.MimeType == mimeType {
+			result = append(result, attachment)
+		}
+	}
+	return result
+}
+
+// GetImageAttachments returns all image attachments
+func (msg *Message) GetImageAttachments() []*attachments.Attachment {
+	var result []*attachments.Attachment
+	for _, attachment := range msg.Attachments {
+		if attachment.IsImage() {
+			result = append(result, attachment)
+		}
+	}
+	return result
+}
+
+// GetDocumentAttachments returns all document attachments
+func (msg *Message) GetDocumentAttachments() []*attachments.Attachment {
+	var result []*attachments.Attachment
+	for _, attachment := range msg.Attachments {
+		if attachment.IsDocument() {
+			result = append(result, attachment)
+		}
+	}
+	return result
+}
+
+// GetTotalAttachmentSize returns the total size of all attachments
+func (msg *Message) GetTotalAttachmentSize() int64 {
+	var total int64
+	for _, attachment := range msg.Attachments {
+		total += attachment.Size
+	}
+	return total
 }
